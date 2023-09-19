@@ -1,25 +1,8 @@
-# sklearn-genetic - Genetic feature selection module for scikit-learn
-# Copyright (C) 2016-2022  Manuel Calzolari
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Lesser General Public License as published by
-# the Free Software Foundation, version 3 of the License.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Lesser General Public License for more details.
-#
-# You should have received a copy of the GNU Lesser General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-"""Genetic algorithm for feature selection"""
-
 import numbers
 import multiprocess
 import numpy as np
 from sklearn.utils import check_X_y
-from sklearn.utils.metaestimators import available_if
+from sklearn.utils.metaestimators import if_delegate_has_method
 from sklearn.base import BaseEstimator
 from sklearn.base import MetaEstimatorMixin
 from sklearn.base import clone
@@ -33,10 +16,9 @@ from deap import base
 from deap import creator
 from deap import tools
 
-
+# Creating the DEAP creators
 creator.create("Fitness", base.Fitness, weights=(1.0, -1.0, -1.0))
 creator.create("Individual", list, fitness=creator.Fitness)
-
 
 def _eaFunction(population, toolbox, cxpb, mutpb, ngen, ngen_no_change=None, stats=None,
                 halloffame=None, verbose=0):
@@ -106,13 +88,11 @@ def _eaFunction(population, toolbox, cxpb, mutpb, ngen, ngen_no_change=None, sta
 
     return population, logbook
 
-
 def _createIndividual(icls, n, max_features):
     n_features = np.random.randint(1, max_features + 1)
     genome = ([1] * n_features) + ([0] * (n - n_features))
     np.random.shuffle(genome)
     return icls(genome)
-
 
 def _evalFunction(individual, estimator, X, y, groups, cv, scorer, fit_params, max_features,
                   caching, scores_cache={}):
@@ -131,125 +111,12 @@ def _evalFunction(individual, estimator, X, y, groups, cv, scorer, fit_params, m
         scores_cache[individual_tuple] = [scores_mean, scores_std]
     return scores_mean, individual_sum, scores_std
 
-
-def _estimator_has(attr):
-    """Check if we can delegate a method to the underlying estimator.
-
-    First, we check the first fitted estimator if available, otherwise we
-    check the unfitted estimator.
-    """
-    return lambda self: (
-        hasattr(self.estimator_, attr)
-        if hasattr(self, "estimator_")
-        else hasattr(self.estimator, attr)
-    )
-
-
 class GeneticSelectionCV(BaseEstimator, MetaEstimatorMixin, SelectorMixin):
-    """Feature selection with genetic algorithm.
-
-    Parameters
-    ----------
-    estimator : object
-        A supervised learning estimator with a `fit` method.
-
-    cv : int, cross-validation generator or an iterable, optional
-        Determines the cross-validation splitting strategy.
-        Possible inputs for cv are:
-
-        - None, to use the default 3-fold cross-validation,
-        - integer, to specify the number of folds.
-        - An object to be used as a cross-validation generator.
-        - An iterable yielding train/test splits.
-
-        For integer/None inputs, if ``y`` is binary or multiclass,
-        :class:`StratifiedKFold` used. If the estimator is a classifier
-        or if ``y`` is neither binary nor multiclass, :class:`KFold` is used.
-
-    scoring : string, callable or None, optional, default: None
-        A string (see model evaluation documentation) or
-        a scorer callable object / function with signature
-        ``scorer(estimator, X, y)``.
-
-    fit_params : dict, optional
-        Parameters to pass to the fit method.
-
-    max_features : int or None, optional
-        The maximum number of features selected.
-
-    verbose : int, default=0
-        Controls verbosity of output.
-
-    n_jobs : int, default 1
-        Number of cores to run in parallel.
-        Defaults to 1 core. If `n_jobs=-1`, then number of jobs is set
-        to number of cores.
-
-    n_population : int, default=300
-        Number of population for the genetic algorithm.
-
-    crossover_proba : float, default=0.5
-        Probability of crossover for the genetic algorithm.
-
-    mutation_proba : float, default=0.2
-        Probability of mutation for the genetic algorithm.
-
-    n_generations : int, default=40
-        Number of generations for the genetic algorithm.
-
-    crossover_independent_proba : float, default=0.1
-        Independent probability for each attribute to be exchanged, for the genetic algorithm.
-
-    mutation_independent_proba : float, default=0.05
-        Independent probability for each attribute to be mutated, for the genetic algorithm.
-
-    tournament_size : int, default=3
-        Tournament size for the genetic algorithm.
-
-    n_gen_no_change : int, default None
-        If set to a number, it will terminate optimization when best individual is not
-        changing in all of the previous ``n_gen_no_change`` number of generations.
-
-    caching : boolean, default=False
-        If True, scores of the genetic algorithm are cached.
-
-    Attributes
-    ----------
-    n_features_ : int
-        The number of selected features with cross-validation.
-
-    support_ : array of shape [n_features]
-        The mask of selected features.
-
-    generation_scores_ : array of shape [n_generations]
-        The maximum cross-validation score for each generation.
-
-    estimator_ : object
-        The external estimator fit on the reduced dataset.
-
-    Examples
-    --------
-    An example showing genetic feature selection.
-
-    >>> import numpy as np
-    >>> from sklearn import datasets, linear_model
-    >>> from genetic_selection import GeneticSelectionCV
-    >>> iris = datasets.load_iris()
-    >>> E = np.random.uniform(0, 0.1, size=(len(iris.data), 20))
-    >>> X = np.hstack((iris.data, E))
-    >>> y = iris.target
-    >>> estimator = linear_model.LogisticRegression(solver="liblinear", multi_class="ovr")
-    >>> selector = GeneticSelectionCV(estimator, cv=5)
-    >>> selector = selector.fit(X, y)
-    >>> selector.support_ # doctest: +NORMALIZE_WHITESPACE
-    array([ True  True  True  True False False False False False False False False
-           False False False False False False False False False False False False], dtype=bool)
-    """
     def __init__(self, estimator, cv=None, scoring=None, fit_params=None, max_features=None,
                  verbose=0, n_jobs=1, n_population=300, crossover_proba=0.5, mutation_proba=0.2,
                  n_generations=40, crossover_independent_proba=0.1,
                  mutation_independent_proba=0.05, tournament_size=3, n_gen_no_change=None,
-                 caching=False):
+                 caching=False, random_seed=None):  # Added random_seed argument
         self.estimator = estimator
         self.cv = cv
         self.scoring = scoring
@@ -267,32 +134,18 @@ class GeneticSelectionCV(BaseEstimator, MetaEstimatorMixin, SelectorMixin):
         self.n_gen_no_change = n_gen_no_change
         self.caching = caching
         self.scores_cache = {}
+        self.random_seed = random_seed  # Added random_seed attribute
 
-    @property
-    def _estimator_type(self):
-        return self.estimator._estimator_type
+    def _initialize_random_seed(self):
+        if self.random_seed is not None:
+            np.random.seed(self.random_seed)
 
     def fit(self, X, y, groups=None):
-        """Fit the GeneticSelectionCV model and the underlying estimator on the selected features.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix}, shape = [n_samples, n_features]
-            The training input samples.
-
-        y : array-like, shape = [n_samples]
-            The target values.
-
-        groups : array-like, shape = [n_samples], optional
-            Group labels for the samples used while splitting the dataset into
-            train/test set. Only used in conjunction with a "Group" `cv`
-            instance (e.g., `GroupKFold`).
-        """
         return self._fit(X, y, groups)
 
     def _fit(self, X, y, groups=None):
         X, y = check_X_y(X, y, "csr")
-        # Initialization
+        self._initialize_random_seed()  # Initialize the random seed
         cv = check_cv(self.cv, y, classifier=is_classifier(self.estimator))
         scorer = check_scoring(self.estimator, scoring=self.scoring)
         n_features = X.shape[1]
@@ -360,7 +213,6 @@ class GeneticSelectionCV(BaseEstimator, MetaEstimatorMixin, SelectorMixin):
             pool.close()
             pool.join()
 
-        # Set final attributes
         support_ = np.array(hof, dtype=bool)[0]
         self.estimator_ = clone(self.estimator)
         self.estimator_.fit(X[:, support_], y)
@@ -371,47 +223,25 @@ class GeneticSelectionCV(BaseEstimator, MetaEstimatorMixin, SelectorMixin):
 
         return self
 
-    @available_if(_estimator_has("predict"))
+    @if_delegate_has_method(delegate='estimator')
     def predict(self, X):
-        """Reduce X to the selected features and then predict using the underlying estimator.
-
-        Parameters
-        ----------
-        X : array of shape [n_samples, n_features]
-            The input samples.
-
-        Returns
-        -------
-        y : array of shape [n_samples]
-            The predicted target values.
-        """
         return self.estimator_.predict(self.transform(X))
 
-    @available_if(_estimator_has("score"))
+    @if_delegate_has_method(delegate='estimator')
     def score(self, X, y):
-        """Reduce X to the selected features and return the score of the underlying estimator.
-
-        Parameters
-        ----------
-        X : array of shape [n_samples, n_features]
-            The input samples.
-
-        y : array of shape [n_samples]
-            The target values.
-        """
         return self.estimator_.score(self.transform(X), y)
 
     def _get_support_mask(self):
         return self.support_
 
-    @available_if(_estimator_has("decision_function"))
+    @if_delegate_has_method(delegate='estimator')
     def decision_function(self, X):
         return self.estimator_.decision_function(self.transform(X))
 
-    @available_if(_estimator_has("predict_proba"))
+    @if_delegate_has_method(delegate='estimator')
     def predict_proba(self, X):
         return self.estimator_.predict_proba(self.transform(X))
 
-    @available_if(_estimator_has("predict_log_proba"))
+    @if_delegate_has_method(delegate='estimator')
     def predict_log_proba(self, X):
         return self.estimator_.predict_log_proba(self.transform(X))
